@@ -1,0 +1,37 @@
+# Local development / self-hosting for the Agri-Env Ops Dashboard.
+# One service: the bridge (HTTP + WebSocket) with its SQLite store on a volume.
+#
+#   cp .env.example .env      # fill in your MQTT broker settings
+#   docker compose up -d --build
+#   open http://localhost:8000/ops
+#
+# The image is built locally from the Dockerfile. No registry push is needed
+# for local use. In the SenseCraft solution the same app is referenced as a
+# pre-built image (see the solution's assets/custom_dashboard/docker-compose.yml).
+
+name: agri-env-ops-dashboard
+
+services:
+  bridge:
+    build: .
+    image: ${OPS_DASHBOARD_IMAGE:-agri-env-ops-dashboard:local}
+    container_name: agri-env-ops-dashboard
+    # Reads MQTT_* from .env (see .env.example). Never commit .env.
+    # The container always listens on 8000 (HTTP) and 8765 (WS); only the
+    # published host ports below are configurable.
+    env_file:
+      - .env
+    environment:
+      FARM_BIND: 0.0.0.0
+      FARM_HTTP_PORT: "8000"
+      FARM_WS_PORT: "8765"
+      FARM_DB: /data/farm.db
+    ports:
+      - "${HTTP_PORT:-8000}:8000"   # HTTP dashboards + JSON API
+      - "${WS_PORT:-8765}:8765"     # WebSocket live updates
+    volumes:
+      - bridge-data:/data
+    restart: unless-stopped
+
+volumes:
+  bridge-data:

@@ -1,0 +1,35 @@
+<!DOCTYPE html>
+<html lang="en"><head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width,initial-scale=1">
+<meta name="theme-color" content="#0D1922">
+<title>System diagnostics · Farm Ops</title>
+<link rel="stylesheet" href="/ops.css?v=20260917c">
+<script defer src="/ops-core.js?v=20260917c"></script>
+<script defer src="/farm-connection.js?v=20260917c"></script>
+<script defer src="/workbench.js?v=20260917c"></script>
+</head><body data-workbench="admin">
+<a class="skip" href="#workbench" data-wb="skip">Skip to workspace</a>
+<div class="screen wb-screen">
+<header class="masthead" id="wb-header"></header>
+<div class="systembar wb-system"><span id="wb-mode" class="mode">—</span><span id="wb-browser">○ Browser connecting</span><span id="wb-bridge">○ Bridge waiting</span><span id="wb-mqtt">○ MQTT unknown</span><button id="wb-refresh" type="button" data-wb="refresh">Refresh</button></div>
+<p class="notice" id="wb-notice" role="status" hidden></p>
+<main id="workbench" class="wb-main diagnostic-workspace" tabindex="-1">
+<section class="panel diagnostic-health" aria-labelledby="diagnostic-health-title">
+<div class="panel-head"><h2 id="diagnostic-health-title" data-wb="sourceHealth">Data freshness</h2><span id="health-summary" class="tag">—</span></div>
+<p class="caption" data-wb="healthNote">A connected browser does not mean sensors are reporting. Each source has its own last received time.</p>
+<div class="health-tables">
+<section class="health-table-group"><h3>LoRa</h3><div id="diag-lora" class="wb-scroll" tabindex="0"></div></section>
+<section class="health-table-group"><h3>Meshtastic</h3><div id="diag-mesh" class="wb-scroll" tabindex="0"></div></section>
+</div>
+<p class="caption" id="diagnostic-gaps" data-wb="meshGap">Meshtastic RSSI, SNR and frame counts are not supplied by the current API. — means unavailable.</p>
+</section>
+<section class="panel raw-panel" aria-labelledby="raw-title">
+<div class="panel-head"><h2 id="raw-title" data-wb="rawUplinks">Raw LoRa uplinks</h2><button id="raw-pause" type="button" aria-pressed="false" data-wb="pause">Pause updates</button></div>
+<div class="raw-controls"><label><span data-wb="filter">Device / topic filter</span><input id="raw-filter" type="search" autocomplete="off"></label><label><span data-wb="limit">Display limit</span><select id="raw-limit"><option>20</option><option>50</option><option>200</option></select></label></div>
+<p id="raw-summary" class="caption" role="status"></p>
+<div id="raw-list" class="wb-scroll raw-list" tabindex="0"></div>
+<p class="caption" data-wb="rawNote">Expand a packet to view its original JSON. Pausing freezes this list; reception continues.</p>
+</section></main>
+<footer><span data-wb="receiptNote">Times are Bridge receipt times · Lisbon</span><span data-wb="readOnly">Receive only</span></footer>
+</div></body></html>

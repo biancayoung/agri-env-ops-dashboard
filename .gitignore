@@ -1,0 +1,17 @@
+# Python
+.venv/
+venv/
+__pycache__/
+*.pyc
+*.pyo
+
+# Runtime data / secrets — never commit these
+farm.db
+farm.db-*
+.env
+.env.*
+
+# OS / editor
+.DS_Store
+Thumbs.db
+node_modules/

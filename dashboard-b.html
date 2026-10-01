@@ -1,0 +1,84 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width,initial-scale=1">
+<meta name="theme-color" content="#0D1922">
+<title>Farm Ops Dashboard · Field operations</title>
+<link rel="stylesheet" href="/ops.css?v=20260918m">
+<script defer src="/ops-core.js?v=20260918l"></script>
+<script defer src="/farm-connection.js?v=20260918l"></script>
+<script defer src="/dashboard-b-client.js?v=20260918l"></script>
+</head>
+<body>
+<a class="skip" href="#conditions" data-i18n="skip">Skip to observations</a>
+<div class="screen">
+<header class="masthead">
+  <div class="identity"><span class="brand-logo" role="img" aria-label="Farm Ops" style="display:inline-flex;align-items:center;justify-content:center;width:40px;height:40px;font-size:28px;line-height:1">🌱</span><div><p data-i18n="eyebrow">Environmental monitoring</p><h1>Farm <span>Ops</span></h1></div></div>
+  <nav aria-label="Main"><a href="/ops" aria-current="page" data-i18n="operations">Operations</a><a href="/data" data-i18n="data">Sensor details</a><a href="/admin" data-i18n="admin">System diagnostics</a></nav>
+  <div class="header-tools"><span id="mode" class="mode" hidden>…</span><div class="clockbox"><span class="header-place" data-i18n="farmPlace">Environmental monitoring</span><span id="date">Lisbon time</span><time id="clock">--:--</time></div><button id="langToggle" type="button" aria-label="切换到中文">中文</button><button id="refresh" type="button" data-i18n="refresh">Refresh</button></div>
+</header>
+<aside class="site-note" aria-label="About this dashboard">
+  <svg class="site-note-icon" viewBox="0 0 24 24" aria-hidden="true"><circle cx="12" cy="12" r="9" fill="none" stroke="currentColor" stroke-width="1.6"/><path d="M12 10.5v5.5" stroke="currentColor" stroke-width="1.8" stroke-linecap="round"/><circle cx="12" cy="7.4" r="1.2" fill="currentColor"/></svg>
+  <p class="site-note-body"><span data-i18n="farmNote">This is a self-hosted environmental monitoring dashboard. Connect it to your MQTT broker to display live weather, soil and mesh-radio readings from your own devices; this console only displays what those devices report.</span> <a class="site-note-link" href="#" rel="noopener noreferrer" target="_blank">self-hosted dashboard</a></p>
+</aside>
+<p id="notice" class="notice" role="status" hidden></p>
+<main>
+<section class="conditions" id="conditions" tabindex="-1" aria-labelledby="conditions-title">
+  <div class="section-title"><h2 id="conditions-title" data-i18n="weatherStation">Agricultural weather</h2><span data-i18n="lastValues">Last received values · select to inspect</span></div>
+  <div class="readouts" id="readouts"></div>
+</section>
+<div class="workspace">
+<section class="weather-region" aria-labelledby="trends-title">
+  <div class="weather-grid">
+    <section class="panel trends" id="trends" aria-labelledby="trends-title">
+      <div class="panel-head"><div><p class="eyebrow" data-i18n="history">Observation history</p><h2 id="trends-title"><svg class="panel-icon" viewBox="0 0 24 24" aria-hidden="true"><path d="M4 4v16h16M7 14l4-5 3 3 5-7" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round"/></svg><span data-i18n="trends">Environmental trends</span></h2><p class="panel-sub" id="chart-summary"></p></div></div>
+      <div class="trend-dense">
+        <div class="focus-trend">
+          <div class="trend-toolbar">
+            <div id="trend-tabs" class="trend-tabs" role="group" aria-label="Trend metric"></div>
+            <div class="trend-controls"><label><span class="sr-only" data-i18n="window">Time window</span><select id="window"><option value="24">24 h</option><option value="48">48 h</option></select></label><button id="viewReadings" type="button" data-i18n="viewReadings">View readings</button></div>
+          </div>
+          <div class="chart-heading"><strong id="chart-label"></strong></div>
+          <div class="chart-wrap"><svg id="trend-chart" viewBox="0 0 1000 150" role="img" aria-labelledby="chart-label chart-description"></svg><p id="chart-empty" class="chart-empty" hidden></p></div>
+        </div>
+      </div>
+      <p class="caption" id="chart-description" data-i18n="chartCaption">Time in Lisbon · raw samples · gaps over 90 minutes remain visible</p>
+    </section>
+    <section class="panel wind-station" aria-labelledby="windrose-title">
+      <div class="panel-head"><div><p class="eyebrow" data-i18n="windObservation">Wind observation</p><h3 id="windrose-title" data-i18n="windRose">Wind rose · 48 h</h3></div><span class="tag" id="wind-samples">—</span></div>
+      <div class="wind-main">
+        <button type="button" class="wind-current" id="wind-select">
+          <span class="metric-main"><span class="metric-value"><strong id="wind-current-speed">—</strong><small>m/s</small></span><span id="wind-current-delta" class="metric-delta">—</span></span>
+          <span id="wind-current-visual" class="metric-visual" aria-hidden="true"></span>
+          <span id="wind-current-range" class="metric-range"></span>
+          <span><b id="wind-current-direction">—</b><small data-i18n="currentWind">Current wind</small></span>
+          <span id="wind-current-stamp" class="stamp"></span>
+        </button>
+        <div class="windrose-wrap"><svg id="wind-rose" viewBox="0 0 180 180" role="img" aria-labelledby="windrose-title windrose-note"></svg><div id="wind-legend" class="wind-legend"></div><p id="wind-empty" class="atlas-empty" hidden></p></div>
+      </div>
+      <p id="windrose-note" class="micro-caption" data-i18n="windScale">Direction frequency · colour is wind speed</p>
+    </section>
+  </div>
+</section>
+<section class="panel communications" aria-labelledby="mesh-title">
+  <div class="panel-head"><div><p class="eyebrow">Meshtastic</p><h2 id="mesh-title"><svg class="panel-icon" viewBox="0 0 24 24" aria-hidden="true"><path d="M9 4 3 6v14l6-2 6 2 6-2V4l-6 2-6-2Zm0 0v14m6-12v14" fill="none" stroke="currentColor" stroke-width="1.6" stroke-linecap="round" stroke-linejoin="round"/></svg><span data-i18n="offgrid">Off-grid communications</span></h2><p class="panel-sub"><span id="mesh-summary" class="mesh-summary"></span> · <span id="positionCount"></span></p></div><span class="tag" data-i18n="receiveOnly">Receive only</span></div>
+  <section class="instrument-map" aria-labelledby="atlas-title">
+    <div class="instrument-title"><h3 id="atlas-title" data-i18n="atlas">Reported positions</h3><span data-i18n="northUp">N ↑</span></div>
+    <div class="atlas-body"><svg id="atlas" viewBox="0 0 600 280" role="group" aria-labelledby="atlas-title atlas-caption"></svg><p id="atlas-empty" class="atlas-empty" hidden></p></div>
+    <div id="position-detail" class="position-detail"></div>
+    <p class="micro-caption" id="atlas-caption" data-i18n="atlasCaption">Reported coordinates · north up · equal scale</p>
+  </section>
+  <div class="offgrid-feed">
+    <section class="node-feed" aria-labelledby="nodes-title"><div class="message-heading"><h3 id="nodes-title" data-i18n="nodes">Mesh nodes</h3></div><div id="mesh-nodes" class="mesh-nodes" tabindex="0" aria-label="Mesh nodes"></div></section>
+    <section class="message-feed" aria-labelledby="messages-title"><div class="message-heading"><h3 id="messages-title" data-i18n="messages">Received messages</h3><span id="messageCount"></span></div><div id="messages" class="messages" tabindex="0" aria-label="Received messages"></div></section>
+  </div>
+  <p class="caption" data-i18n="meshCaption">Use a mesh radio to transmit. This console receives messages.</p>
+</section>
+</div>
+</main>
+<footer><span data-i18n="footer">Field observations support investigation; no hazard classification is configured.</span><a href="/a" data-i18n="simpleView">Simple dashboard ↗</a></footer>
+</div>
+<dialog id="detail" aria-labelledby="detail-title"><div class="dialog-head"><div><p class="eyebrow" data-i18n="inspect">Inspect observation</p><h2 id="detail-title"></h2></div><button id="closeDetail" type="button" data-i18n="close">Close</button></div><div id="detail-body"></div></dialog>
+</body>
+</html>

@@ -1,0 +1,29 @@
+<!DOCTYPE html>
+<html lang="en"><head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width,initial-scale=1">
+<meta name="theme-color" content="#0D1922">
+<title>Sensor details · Farm Ops</title>
+<link rel="stylesheet" href="/ops.css?v=20260917c">
+<script defer src="/ops-core.js?v=20260917c"></script>
+<script defer src="/farm-connection.js?v=20260917c"></script>
+<script defer src="/workbench.js?v=20260917c"></script>
+</head><body data-workbench="data">
+<a class="skip" href="#workbench" data-wb="skip">Skip to workspace</a>
+<div class="screen wb-screen">
+<header class="masthead" id="wb-header"></header>
+<div class="systembar wb-system"><span id="wb-mode" class="mode">—</span><span id="wb-browser">○ Browser connecting</span><span id="wb-bridge">○ Bridge waiting</span><span id="wb-mqtt">○ MQTT unknown</span><button id="wb-refresh" type="button" data-wb="refresh">Refresh</button></div>
+<p class="notice" id="wb-notice" role="status" hidden></p>
+<main id="workbench" class="wb-main data-workspace" tabindex="-1">
+<section class="panel device-panel" aria-labelledby="device-list-title">
+<div class="panel-head"><h2 id="device-list-title" data-wb="devices">Devices</h2><span id="device-count" class="tag">—</span></div>
+<div id="device-list" class="wb-scroll device-list" tabindex="0"></div>
+<p class="caption" data-wb="deviceHint">Select a device to view all decoded fields.</p>
+</section>
+<section class="panel fields-panel" aria-labelledby="device-title">
+<div class="panel-head"><div><h2 id="device-title" tabindex="-1" data-wb="selectDevice">Select a device</h2><p class="caption" id="device-subtitle"></p></div><button id="device-back" type="button" data-wb="back" disabled>Back to devices</button></div>
+<p class="caption" data-wb="historyNote">Charts show dated samples only; legacy time-only records are omitted.</p>
+<div id="field-list" class="wb-scroll field-list" tabindex="0"></div>
+</section></main>
+<footer><span data-wb="receiptNote">Times are Bridge receipt times · Lisbon</span><span data-wb="readOnly">Receive only</span></footer>
+</div></body></html>

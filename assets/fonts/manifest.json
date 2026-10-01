@@ -1,0 +1,37 @@
+{
+  "Barlow-Regular.ttf": {
+    "source_sha256": "95aa02c7c43096e0dd44d787ba6216864a67157e402adab59b35572e0c1577ea",
+    "output": "Barlow-Regular.woff2",
+    "output_sha256": "ec0eb7420f0088591a2adf3dbf846865ac1b1e12862d7d638a0e0cba2d299fc3"
+  },
+  "Barlow-Medium.ttf": {
+    "source_sha256": "f8906f762cb73dca441da034bc363b2d8e2e68bc10d5c05e58717646c20cc4b4",
+    "output": "Barlow-Medium.woff2",
+    "output_sha256": "4b4a89bd2cfa40f767aec06a415cdabcde5b4b395e0bf2f8f8aeedcbd3d2de87"
+  },
+  "Barlow-SemiBold.ttf": {
+    "source_sha256": "86577cb32f8abe3673db53ca0f4221e6856751a4f6730c867e00f720f8bb1fc5",
+    "output": "Barlow-SemiBold.woff2",
+    "output_sha256": "ee725b9cb104395650af82a3a116f243f195e8d77a13ad24f015d1d29d1db1bc"
+  },
+  "BarlowCondensed-Medium.ttf": {
+    "source_sha256": "262bd143292ce479ee0cd09a42b47ab173fca8e9c6eb5ed0b5c8a845bc371d17",
+    "output": "BarlowCondensed-Medium.woff2",
+    "output_sha256": "d654c42cad50896b0999018f79d9e68b9307032485a425d152a501fc9a30e779"
+  },
+  "BarlowCondensed-SemiBold.ttf": {
+    "source_sha256": "7b619d14bc2327509a9ef32b0890f709626f7ecc9ff61191c2a4314c5499d2d9",
+    "output": "BarlowCondensed-SemiBold.woff2",
+    "output_sha256": "aa34a9f74703712087559e56e3ed6d18e0b1d1fbd3fef504bcea9e4bf880398e"
+  },
+  "IBMPlexMono-Regular.ttf": {
+    "source_sha256": "6a3412f058c7d8dfd9170c41e85ade48e5156ecb89356110ca57a0a27734af46",
+    "output": "IBMPlexMono-Regular.woff2",
+    "output_sha256": "c83680379d7094f19c80ab724e4fb744ea2535e83735243656b4019894a03b73"
+  },
+  "NotoSansSC-full.ttf": {
+    "source_sha256": "a3041811a78c361b1de50f953c805e0244951c21c5bd412f7232ef0d899af0da",
+    "output": "NotoSansSC-UI.woff2",
+    "output_sha256": "39f409332aff91eed360652646869b385544ef4f4bd86b6eaa3ee5f6427553ec"
+  }
+}
