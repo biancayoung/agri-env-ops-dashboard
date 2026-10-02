@@ -49,6 +49,38 @@ chmod 600 .env
   pointing at your CA bundle).
 - **Never commit `.env`** — it holds your broker credentials.
 
+## Input modes
+
+The bridge accepts two input contracts, selected with `--source {auto,uplink,bridge}`
+or `MQTT_SOURCE` (default `auto`):
+
+| Mode | MQTT topic | Behaviour |
+|---|---|---|
+| `uplink` | `application/+/device/+/event/up` (default) | Decodes raw ChirpStack uplinks itself (unchanged, the original behaviour). |
+| `bridge` | `agri_env/+/+/state` (default when `MQTT_SOURCE=bridge`) | Consumes the normalized contract published by [agri-env-monitor](https://github.com/suharvest/agri-env-monitor) (`agri_env_bridge`) — no decoding, no per-DevEUI table. |
+| `auto` | either | Picks `bridge` when the configured `MQTT_TOPIC` matches the bridge state pattern `<base>/+/+/state`, otherwise `uplink`. The resolved mode is logged once at connect. |
+
+In `bridge` mode the dashboard subscribes to:
+
+| Topic | Payload |
+|---|---|
+| `agri_env/<node_id>/<entity_key>/state` | retained literal string (`ON`/`OFF` → bool, otherwise float when it parses) |
+| `agri_env/<node_id>/availability` | retained `online` / `offline` (drives per-device status) |
+| `homeassistant/sensor/<node_id>/<entity_key>/config` | retained JSON discovery config (metadata only: name / unit / device_class) |
+
+`node_id` is `sensecap_<eui lowercased>`; the DevEUI is derived by stripping the
+prefix. Generic `entity_key`s (`temperature`, `humidity`, `co2`, `wind_speed`,
+`rainfall_hourly`, `soil_moisture`, …) map directly onto the dashboard cards, and
+unmapped keys still appear under the device's fields on `/data` and `/admin`.
+History, trends, and the wind rose keep working via the same SQLite store.
+
+Bridge-mode quickstart (broker on localhost):
+
+```sh
+MQTT_SOURCE=bridge .venv/bin/python bridge.py --env-file .env
+# or: .venv/bin/python bridge.py --source bridge --mqtt-host 127.0.0.1
+```
+
 ## Routes
 
 | Route | Purpose |

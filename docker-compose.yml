@@ -26,6 +26,8 @@ services:
       FARM_HTTP_PORT: "8000"
       FARM_WS_PORT: "8765"
       FARM_DB: /data/farm.db
+      # Input mode passthrough (auto|uplink|bridge); also read from .env via env_file.
+      MQTT_SOURCE: ${MQTT_SOURCE:-auto}
     ports:
       - "${HTTP_PORT:-8000}:8000"   # HTTP dashboards + JSON API
       - "${WS_PORT:-8765}:8765"     # WebSocket live updates
