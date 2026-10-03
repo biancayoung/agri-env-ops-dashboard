@@ -188,12 +188,14 @@ def db_store(dev_eui, fields, ts=None):
 def db_wind_history(hours=48, limit=2000):
     """Return [(ts, speed, direction)] for the wind rose, oldest first."""
     since = time.time() - hours * 3600
+    wind = SPARK_SOURCES["weather.wind"]
+    wind_dir = SPARK_SOURCES["weather.wind_dir"]
     with _DB_LOCK:
         cur = _db.execute(
             "SELECT ts, field, value FROM readings"
-            " WHERE dev_eui=? AND field IN ('wind speed','wind direction') AND ts>=?"
+            " WHERE dev_eui=? AND field IN (?,?) AND ts>=?"
             " ORDER BY ts ASC LIMIT ?",
-            (SPARK_SOURCES["weather.wind"][0], since, limit))
+            (wind[0], wind[1], wind_dir[1], since, limit))
         rows = cur.fetchall()
     # pair speed + direction by timestamp (same uplink shares ts)
     by_ts = {}
@@ -202,19 +204,237 @@ def db_wind_history(hours=48, limit=2000):
     out = []
     for ts in sorted(by_ts):
         d = by_ts[ts]
-        if "wind speed" in d and "wind direction" in d:
-            out.append([ts, d["wind speed"], d["wind direction"]])
+        if wind[1] in d and wind_dir[1] in d:
+            out.append([ts, d[wind[1]], d[wind_dir[1]]])
     return out
 
 
-# dashboard data-src key -> friendly field name in the readings table
-# dashboard key -> (dev_eui, field). Derived from DASHBOARD_MAP so a slot can
+# dashboard data-src key -> (dev_eui, field). Derived from DASHBOARD_MAP so a slot can
 # only ever be filled by the device it belongs to. Keying on the field name
 # alone silently mixed stations: the greenhouse S2100 also reports
 # "air temperature", "humidity" and "co2", so its readings landed in the
 # weather station's charts and, after a restart, in its live tiles.
 SPARK_SOURCES = {slot: (eui, field) for (eui, field), slot in DASHBOARD_MAP.items()}
 SPARK_SOURCES["weather.rain_rate"] = SPARK_SOURCES["weather.rain_24h"]
+
+
+# ---------------------------------------------------------------------------
+# agri-env-bridge input mode (MQTT_SOURCE=bridge).
+#
+# suharvest/agri-env-monitor (agri_env_bridge) already decodes SenseCAP
+# uplinks and republishes a normalized MQTT contract (see
+# agri_env_bridge/ha/discovery.py):
+#   state        agri_env/<node_id>/<entity_key>/state   retained, plain string
+#   availability agri_env/<node_id>/availability         retained, online|offline
+#   config       homeassistant/sensor/<node_id>/<entity_key>/config  retained JSON
+# with node_id = "sensecap_" + eui.lower(). In bridge mode the dashboard does
+# no decoding: entity_key is mapped straight onto the dashboard card keys.
+# ---------------------------------------------------------------------------
+BRIDGE_BASE_TOPIC = "agri_env"
+BRIDGE_DISCOVERY_PREFIX = "homeassistant"
+
+# entity_key -> dashboard data-src key.
+ENTITY_KEY_MAP = {
+    "temperature": "weather.temp",
+    "humidity": "weather.hum",
+    "co2": "weather.co2",
+    "wind_speed": "weather.wind",
+    "wind_direction": "weather.wind_dir",
+    "rainfall_hourly": "weather.rain_24h",  # and weather.rain_rate (alias)
+    "barometric_pressure": "weather.pressure",
+    "light_intensity": "weather.light",
+    "pm2_5": "weather.pm25",
+    "pm10": "weather.pm10",
+    "soil_temperature": "soil.temp",
+    "soil_moisture": "soil.hum",
+    "electrical_conductivity": "soil.ec",
+}
+# dashboard slot -> dev_eui that owns it in bridge mode (first reporter wins,
+# mirroring the per-device isolation DASHBOARD_MAP gives the uplink path).
+BRIDGE_SLOTS = {}
+# (dev_eui, entity_key) -> {"name","unit","device_class"} from discovery config.
+BRIDGE_META = {}
+
+
+def parse_bridge_topic(topic, base=BRIDGE_BASE_TOPIC, discovery=BRIDGE_DISCOVERY_PREFIX):
+    """Classify a normalized-bridge topic.
+
+    Returns (kind, node_id, entity_key) with kind in
+    {"state", "availability", "config"}, or None if the topic is not part of
+    the bridge contract.
+    """
+    parts = topic.split("/")
+    if len(parts) == 4 and parts[0] == base and parts[3] == "state" and all(parts[1:3]):
+        return ("state", parts[1], parts[2])
+    if len(parts) == 3 and parts[0] == base and parts[2] == "availability" and parts[1]:
+        return ("availability", parts[1], None)
+    if (len(parts) == 5 and parts[0] == discovery and parts[1] == "sensor"
+            and parts[4] == "config" and all(parts[2:4])):
+        return ("config", parts[2], parts[3])
+    return None
+
+
+def bridge_dev_eui(node_id):
+    """dev_eui = node_id minus the 'sensecap_' prefix, uppercased; unknown
+    node_id shapes are kept verbatim."""
+    if node_id.startswith("sensecap_") and node_id[len("sensecap_"):]:
+        return node_id[len("sensecap_"):].upper()
+    return node_id
+
+
+def coerce_bridge_value(text):
+    """State payloads are NOT necessarily JSON: treat them as literal strings.
+    ON/OFF -> bool, otherwise float when it parses, else keep the string."""
+    if text == "ON":
+        return True
+    if text == "OFF":
+        return False
+    try:
+        return float(text)
+    except (TypeError, ValueError):
+        return text
+
+
+def detect_source(topic, prefix=""):
+    """Resolve --source auto from the configured MQTT topic: a topic matching
+    the bridge state pattern (<base>/+/+/state) -> 'bridge', else 'uplink'."""
+    t = topic[len(prefix):] if prefix and topic.startswith(prefix) else topic
+    parts = t.split("/")
+    if len(parts) == 4 and parts[3] == "state" and all(p for p in parts):
+        return "bridge"
+    return "uplink"
+
+
+def _claim_spark_slot(dash_key, dev_eui, entity_key):
+    """Point a dashboard slot at a bridge device (first reporter wins) so
+    sparklines/trends/wind rose read the bridge field names from SQLite."""
+    owner = BRIDGE_SLOTS.get(dash_key)
+    if owner is None:
+        BRIDGE_SLOTS[dash_key] = dev_eui
+        SPARK_SOURCES[dash_key] = (dev_eui, entity_key)
+        if dash_key == "weather.rain_24h":
+            BRIDGE_SLOTS.setdefault("weather.rain_rate", dev_eui)
+            SPARK_SOURCES["weather.rain_rate"] = (dev_eui, entity_key)
+        owner = dev_eui
+    return owner == dev_eui
+
+
+@locked
+def handle_bridge_state(node_id, entity_key, text, received_at=None):
+    """Apply one bridge state message; no decoding, the bridge already did it."""
+    received_at = time.time() if received_at is None else received_at
+    dev_eui = bridge_dev_eui(node_id)
+    value = coerce_bridge_value(text)
+    ts = time.strftime("%H:%M:%S", time.localtime(received_at))
+
+    numeric = {entity_key: value} if finite(value) else {}
+    # Commit first: a failed write must not publish or suppress a retry.
+    db_store(dev_eui, numeric, received_at)
+
+    d = DEVICES.setdefault(dev_eui, {"name": dev_eui, "frames": 0})
+    d["dev_eui"] = dev_eui
+    d["last_seen"] = ts
+    d["last_seen_ts"] = received_at
+    d["frames"] = d.get("frames", 0) + 1
+    d["availability"] = "online"  # a state message proves the publisher is up
+
+    if numeric:
+        dev_fields = FIELDS.setdefault(dev_eui, {})
+        f = dev_fields.setdefault(entity_key, {"latest": None, "history": collections.deque(maxlen=FIELD_HISTORY)})
+        f["latest"] = value
+        f["history"].append([ts, value])
+        meta = BRIDGE_META.get((dev_eui, entity_key))
+        if meta:
+            f["unit"] = meta.get("unit")
+            f["label"] = meta.get("name")
+
+    entry = {
+        "ts": ts,
+        "received_at": received_at,
+        "decoded": numeric,
+        "topic": "%s/%s/%s/state" % (BRIDGE_BASE_TOPIC, node_id, entity_key),
+        "device": d.get("name", dev_eui),
+        "dev_eui": dev_eui,
+        "rssi": None, "snr": None, "fcnt": None,
+        "object": None,
+        "raw": {"bridge": {"node_id": node_id, "entity_key": entity_key, "payload": text}},
+    }
+    RAW_LOG.appendleft(entry)
+    broadcast({"type": "raw", "data": entry}, admin_only=True)
+
+    updates = {}
+    dash_key = ENTITY_KEY_MAP.get(entity_key)
+    if dash_key and finite(value) and _claim_spark_slot(dash_key, dev_eui, entity_key):
+        updates[dash_key] = value
+        if dash_key == "weather.rain_24h":
+            updates["weather.rain_rate"] = value
+    if numeric:
+        RUNTIME["storage_error"] = False
+    apply_updates(updates, received_at)
+
+
+@locked
+def handle_bridge_availability(node_id, text, received_at=None):
+    """Retained online/offline drives per-device availability."""
+    received_at = time.time() if received_at is None else received_at
+    dev_eui = bridge_dev_eui(node_id)
+    status = text.strip().lower()
+    if status not in ("online", "offline"):
+        return
+    d = DEVICES.setdefault(dev_eui, {"name": dev_eui, "frames": 0})
+    d["dev_eui"] = dev_eui
+    d["availability"] = status
+    if status == "online":
+        d.setdefault("last_seen_ts", received_at)
+        d.setdefault("last_seen", time.strftime("%H:%M:%S", time.localtime(received_at)))
+
+
+@locked
+def handle_bridge_config(node_id, entity_key, text):
+    """Discovery config: keep metadata only (name/unit/device_class)."""
+    try:
+        cfg = json.loads(text)
+    except (ValueError, UnicodeDecodeError):
+        return
+    if not isinstance(cfg, dict):
+        return
+    dev_eui = bridge_dev_eui(node_id)
+    BRIDGE_META[(dev_eui, entity_key)] = {
+        "name": cfg.get("name"),
+        "unit": cfg.get("unit_of_measurement"),
+        "device_class": cfg.get("device_class"),
+    }
+    device = cfg.get("device")
+    if isinstance(device, dict) and isinstance(device.get("name"), str):
+        DEVICES.setdefault(dev_eui, {"dev_eui": dev_eui, "frames": 0})["name"] = device["name"]
+
+
+def process_bridge_message(topic, text):
+    """Route one normalized-bridge MQTT message. Payload is a literal string,
+    never json.loads'd (except the discovery config, which is JSON)."""
+    if not isinstance(text, str):
+        return False
+    parsed = parse_bridge_topic(topic)
+    if parsed is None:
+        return False
+    kind, node_id, entity_key = parsed
+    try:
+        if kind == "state":
+            handle_bridge_state(node_id, entity_key, text)
+        elif kind == "availability":
+            handle_bridge_availability(node_id, text)
+        else:
+            handle_bridge_config(node_id, entity_key, text)
+        RUNTIME["mqtt_last_message"] = time.time()
+        return True
+    except sqlite3.Error:
+        with STATE_LOCK:
+            RUNTIME["storage_error"] = True
+        log.exception("telemetry storage failed; MQTT consumer remains active")
+        return False
+    except (TypeError, ValueError, OverflowError, RecursionError):
+        log.warning("invalid bridge message ignored")
+        return False
 
 
 def db_sparklines(points=48):
@@ -590,16 +810,20 @@ def health_payload():
     an overall 'lora' / 'meshtastic' category."""
     now = time.time()
 
-    def entry(name, ts):
+    def entry(name, ts, availability=None):
         age = (now - ts) if ts else None
+        status = _health_status(age)
+        if availability == "offline":
+            status = "down"
         return {
             "name": name,
             "last_seen": ts,
             "age_s": max(0, round(age)) if age is not None else None,
-            "status": _health_status(age),
+            "status": status,
+            "availability": availability,
         }
 
-    lora = [dict(entry(d.get("name", eui), d.get("last_seen_ts")), id=eui)
+    lora = [dict(entry(d.get("name", eui), d.get("last_seen_ts"), d.get("availability")), id=eui)
             for eui, d in DEVICES.items()]
     mesh = [dict(entry(n.get("name", nid), n.get("last_heard_ts")), id=nid)
             for nid, n in MESH_NODES.items()]
@@ -731,7 +955,9 @@ def process_message(topic, msg):
 # MQTT
 # ---------------------------------------------------------------------------
 def start_mqtt(host, port, topic, username, password, tls=False, prefix="",
-               cafile=None, insecure=False):
+               cafile=None, insecure=False, source="uplink"):
+    base = topic[len(prefix):] if prefix and topic.startswith(prefix) else topic
+    base = base.split("/")[0] or BRIDGE_BASE_TOPIC
     client = mqtt.Client(mqtt.CallbackAPIVersion.VERSION2)
     if username:
         client.username_pw_set(username, password)
@@ -753,19 +979,35 @@ def start_mqtt(host, port, topic, username, password, tls=False, prefix="",
         # subscribe to the (possibly prefixed) LoRa + Meshtastic topics
         lora_topic = prefix + topic if prefix else topic
         mesh_topic = prefix + "msh/#"
-        log.info("mqtt connected rc=%s, subscribing %s + %s", rc, lora_topic, mesh_topic)
-        c.subscribe(lora_topic)
-        c.subscribe(mesh_topic)
+        if source == "bridge":
+            avail_topic = prefix + base + "/+/availability"
+            config_topic = prefix + BRIDGE_DISCOVERY_PREFIX + "/sensor/+/+/config"
+            log.info("mqtt connected rc=%s (bridge mode), subscribing %s + %s + %s",
+                     rc, lora_topic, avail_topic, config_topic)
+            c.subscribe(lora_topic)
+            c.subscribe(avail_topic)
+            c.subscribe(config_topic)
+        else:
+            log.info("mqtt connected rc=%s, subscribing %s + %s", rc, lora_topic, mesh_topic)
+            c.subscribe(lora_topic)
+            c.subscribe(mesh_topic)
 
     def on_message(c, userdata, m):
         if len(m.payload) > 256 * 1024:
             log.warning("oversized MQTT payload ignored")
             return
+        t = m.topic[len(prefix):] if prefix and m.topic.startswith(prefix) else m.topic
+        if source == "bridge":
+            try:
+                text = m.payload.decode("utf-8")
+            except UnicodeDecodeError:
+                return  # binary payloads are not part of the bridge contract
+            process_bridge_message(t, text)
+            return
         try:
             msg = json.loads(m.payload, parse_constant=lambda value: (_ for _ in ()).throw(ValueError(value)))
         except (ValueError, UnicodeDecodeError, RecursionError):
             return  # encrypted mesh/protobuf and malformed JSON are not telemetry
-        t = m.topic[len(prefix):] if prefix and m.topic.startswith(prefix) else m.topic
         process_message(t, msg)
 
     def on_disconnect(c, userdata, flags, rc, properties=None):
@@ -945,7 +1187,12 @@ def main():
     ap.add_argument("--ws-port", type=int, default=int(os.getenv("FARM_WS_PORT", "8765")))
     ap.add_argument("--mqtt-host", default=os.getenv("MQTT_HOST", "127.0.0.1"))
     ap.add_argument("--mqtt-port", type=int, default=int(os.getenv("MQTT_PORT", "1883")))
-    ap.add_argument("--mqtt-topic", default=os.getenv("MQTT_TOPIC", "application/+/device/+/event/up"))
+    ap.add_argument("--mqtt-topic", default=os.getenv("MQTT_TOPIC"))
+    ap.add_argument("--source", choices=("auto", "uplink", "bridge"),
+                    default=os.getenv("MQTT_SOURCE", "auto"),
+                    help="input mode: 'uplink' decodes raw ChirpStack uplinks, "
+                         "'bridge' consumes the agri-env-bridge normalized contract, "
+                         "'auto' picks from MQTT_TOPIC")
     ap.add_argument("--mqtt-user", default=os.getenv("MQTT_USER", None))
     ap.add_argument("--mqtt-pass", default=os.getenv("MQTT_PASSWORD", None))
     ap.add_argument("--mqtt-tls", action="store_true", default=os.getenv("MQTT_TLS") == "1")
@@ -960,12 +1207,20 @@ def main():
         ap.error("ports must be from 1 to 65535")
     if args.http_port == args.ws_port:
         ap.error("HTTP and WebSocket ports must differ")
+    if args.source not in ("auto", "uplink", "bridge"):
+        ap.error("MQTT_SOURCE must be one of: auto, uplink, bridge")
+    if not args.mqtt_topic:
+        args.mqtt_topic = ("agri_env/+/+/state" if args.source == "bridge"
+                           else "application/+/device/+/event/up")
+    source = (detect_source(args.mqtt_topic, args.mqtt_prefix)
+              if args.source == "auto" else args.source)
     if args.demo:
         args.bind = "127.0.0.1"
     # Fail startup if either listener cannot bind; never leave a half-live service.
     http_server = ThreadingHTTPServer((args.bind, args.http_port), Handler)
     init_db(":memory:" if args.demo else args.db)
-    RUNTIME.update(mode="demo" if args.demo else "live", ws_port=args.ws_port)
+    RUNTIME.update(mode="demo" if args.demo else "live", ws_port=args.ws_port,
+                   mqtt_source=source)
     load_state_from_db()
     if args.demo:
         from demo import seed, run
@@ -977,10 +1232,12 @@ def main():
         http_server.server_close()
         raise SystemExit("WebSocket listener could not start; check bind address and port")
     if not args.demo:
+        log.info("input source: %s (MQTT_SOURCE=%s, topic=%s)", source, args.source, args.mqtt_topic)
         start_mqtt(args.mqtt_host, args.mqtt_port, args.mqtt_topic,
                    args.mqtt_user, args.mqtt_pass,
                    tls=args.mqtt_tls, prefix=args.mqtt_prefix,
-                   cafile=args.mqtt_cafile, insecure=args.mqtt_insecure)
+                   cafile=args.mqtt_cafile, insecure=args.mqtt_insecure,
+                   source=source)
     log.info("http listening on http://%s:%d", args.bind, args.http_port)
     try:
         http_server.serve_forever()

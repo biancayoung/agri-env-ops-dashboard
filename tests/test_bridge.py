@@ -249,4 +249,127 @@ class BridgeTests(unittest.TestCase):
             b.LOOP=None
         asyncio.run(exercise())
 
+class BridgeModeTests(unittest.TestCase):
+    """MQTT_SOURCE=bridge: consume the agri-env-bridge normalized contract."""
+    EUI = '2CF7F1C07320007C'
+    NODE = 'sensecap_2cf7f1c07320007c'
+
+    def setUp(self):
+        b.init_db(':memory:')
+        b.STATE.update({key: [] if key=='mesh.msgs' else None for key in b.STATE})
+        for value in (b.DEVICES,b.FIELDS,b.METRIC_TS,b.BRIDGE_META): value.clear()
+        b.RAW_LOG.clear()
+        self.spark_sources = dict(b.SPARK_SOURCES)
+        self.slots = dict(b.BRIDGE_SLOTS)
+
+    def tearDown(self):
+        b.SPARK_SOURCES.clear(); b.SPARK_SOURCES.update(self.spark_sources)
+        b.BRIDGE_SLOTS.clear(); b.BRIDGE_SLOTS.update(self.slots)
+        b._db.close()
+        b._db = None
+
+    def state_topic(self, entity='temperature', node=None):
+        return 'agri_env/%s/%s/state' % (node or self.NODE, entity)
+
+    def test_topic_parsing(self):
+        self.assertEqual(b.parse_bridge_topic(self.state_topic()), ('state', self.NODE, 'temperature'))
+        self.assertEqual(b.parse_bridge_topic('agri_env/%s/availability' % self.NODE), ('availability', self.NODE, None))
+        self.assertEqual(b.parse_bridge_topic('homeassistant/sensor/%s/temperature/config' % self.NODE),
+                         ('config', self.NODE, 'temperature'))
+        for topic in ('agri_env/sensecap_x/temperature', 'application/+/device/+/event/up',
+                      'msh/2/json/ch/!abcd', 'agri_env//temperature/state', 'other/+/+/state'):
+            self.assertIsNone(b.parse_bridge_topic(topic), topic)
+
+    def test_dev_eui_derivation(self):
+        self.assertEqual(b.bridge_dev_eui(self.NODE), self.EUI)
+        self.assertEqual(b.bridge_dev_eui('other-shape'), 'other-shape')
+        self.assertEqual(b.bridge_dev_eui('sensecap_'), 'sensecap_')
+
+    def test_value_coercion(self):
+        self.assertIs(b.coerce_bridge_value('ON'), True)
+        self.assertIs(b.coerce_bridge_value('OFF'), False)
+        self.assertEqual(b.coerce_bridge_value('23.5'), 23.5)
+        self.assertEqual(b.coerce_bridge_value('-4'), -4.0)
+        self.assertEqual(b.coerce_bridge_value('{"a":1}'), '{"a":1}')
+        self.assertEqual(b.coerce_bridge_value('n/a'), 'n/a')
+
+    def test_entity_key_maps_to_dashboard_cards(self):
+        self.assertTrue(b.process_bridge_message(self.state_topic('temperature'), '23.5'))
+        self.assertEqual(b.STATE['weather.temp'], 23.5)
+        self.assertTrue(b.process_bridge_message(self.state_topic('rainfall_hourly'), '1.2'))
+        self.assertEqual(b.STATE['weather.rain_24h'], 1.2)
+        self.assertEqual(b.STATE['weather.rain_rate'], 1.2)
+        self.assertTrue(b.process_bridge_message(self.state_topic('soil_moisture'), '41'))
+        self.assertEqual(b.STATE['soil.hum'], 41.0)
+        # slots are claimed by the bridge device, so sparklines/history read it back
+        self.assertEqual(b.SPARK_SOURCES['weather.temp'], (self.EUI, 'temperature'))
+        self.assertEqual(b.db_sparklines()['weather.temp'][-1][1], 23.5)
+
+    def test_on_off_bool_not_forced_into_numeric_state(self):
+        self.assertTrue(b.process_bridge_message(self.state_topic('heater'), 'ON'))
+        self.assertNotIn('heater', b.FIELDS.get(self.EUI, {}))  # bools are not finite; uplink path agrees
+        self.assertIn(self.EUI, b.DEVICES)
+
+    def test_availability_drives_device_status(self):
+        self.assertTrue(b.process_bridge_message(self.state_topic(), '20'))
+        self.assertTrue(b.process_bridge_message('agri_env/%s/availability' % self.NODE, 'offline'))
+        self.assertEqual(b.DEVICES[self.EUI]['availability'], 'offline')
+        health = {e['id']: e for e in b.health_payload()['lora']}
+        self.assertEqual(health[self.EUI]['status'], 'down')
+        self.assertTrue(b.process_bridge_message('agri_env/%s/availability' % self.NODE, 'online'))
+        self.assertEqual(b.DEVICES[self.EUI]['availability'], 'online')
+        self.assertTrue(b.process_bridge_message('agri_env/%s/availability' % self.NODE, 'bogus'))
+        json.dumps(b.admin_snapshot(), allow_nan=False)
+        json.dumps(b.health_payload(), allow_nan=False)
+
+    def test_unknown_entity_key_reaches_fields_history(self):
+        self.assertTrue(b.process_bridge_message(self.state_topic('liquid_level'), '0.83'))
+        fields = b.fields_payload()[self.EUI]['fields']
+        self.assertEqual(fields['liquid_level']['latest'], 0.83)
+        self.assertIsNone(b.STATE['weather.temp'])
+
+    def test_discovery_config_metadata_only(self):
+        cfg = {'name': 'Air Temperature', 'unique_id': 'sensecap_x_temperature',
+               'state_topic': self.state_topic(), 'unit_of_measurement': '°C',
+               'device_class': 'temperature',
+               'device': {'identifiers': [self.NODE], 'name': 'Weather Station',
+                          'manufacturer': 'SenseCAP', 'model': 'S1000'}}
+        self.assertTrue(b.process_bridge_message(
+            'homeassistant/sensor/%s/temperature/config' % self.NODE, json.dumps(cfg)))
+        self.assertEqual(b.BRIDGE_META[(self.EUI, 'temperature')]['unit'], '°C')
+        self.assertTrue(b.process_bridge_message(self.state_topic(), '21'))
+        self.assertEqual(b.DEVICES[self.EUI]['name'], 'Weather Station')
+        self.assertEqual(b.FIELDS[self.EUI]['temperature']['unit'], '°C')
+
+    def test_auto_detection_picks_mode(self):
+        self.assertEqual(b.detect_source('agri_env/+/+/state'), 'bridge')
+        self.assertEqual(b.detect_source('agri_env/sensecap_x/temperature/state'), 'bridge')
+        self.assertEqual(b.detect_source('application/+/device/+/event/up'), 'uplink')
+        self.assertEqual(b.detect_source('msh/#'), 'uplink')
+        self.assertEqual(b.detect_source('farm/agri_env/+/+/state', prefix='farm/'), 'bridge')
+
+    def test_retained_replay_is_idempotent(self):
+        for _ in range(2):
+            self.assertTrue(b.process_bridge_message(self.state_topic(), '22'))
+        self.assertEqual(b.STATE['weather.temp'], 22.0)
+        self.assertEqual(b.DEVICES[self.EUI]['frames'], 2)
+
+    def test_first_reporter_owns_the_slot(self):
+        other = 'sensecap_aabbccddeeff0011'
+        self.assertTrue(b.process_bridge_message(self.state_topic(), '20'))
+        self.assertTrue(b.process_bridge_message(self.state_topic(node=other), '99'))
+        self.assertEqual(b.STATE['weather.temp'], 20.0)
+        # the second device still gets its own field history
+        self.assertEqual(b.FIELDS[b.bridge_dev_eui(other)]['temperature']['latest'], 99.0)
+
+    def test_storage_failure_does_not_stop_bridge_ingestion(self):
+        with patch.object(b, 'db_store', side_effect=sqlite3.OperationalError('fixture disk full')):
+            self.assertFalse(b.process_bridge_message(self.state_topic(), '20'))
+        self.assertTrue(b.RUNTIME['storage_error'])
+        self.assertIsNone(b.STATE['weather.temp'])
+        self.assertTrue(b.process_bridge_message(self.state_topic(), '21'))
+        self.assertFalse(b.RUNTIME['storage_error'])
+        self.assertEqual(b.STATE['weather.temp'], 21.0)
+
+
 if __name__=='__main__':unittest.main()
